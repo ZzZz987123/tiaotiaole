@@ -3,6 +3,10 @@ const THREE = window.THREE, PI = Math.PI;
 const SoundFX = {
     ctx: null,
     init() { try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} },
+    ensure() {
+        if (!this.ctx) this.init();
+        if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+    },
     _t(f, d, type, vol, delay) {
         if (!this.ctx) return;
         if (this.ctx.state === 'suspended') this.ctx.resume();
@@ -1048,16 +1052,43 @@ function restart() {
 
 // ==================== EVENTS ====================
 
-function onDown(e) { e.preventDefault(); if (state === 'IDLE') startCharge(); }
+let activePointerId = null;
 
-function onUp(e) { e.preventDefault(); if (state === 'CHARGING') releaseJump(); }
+function isPrimaryPointer(e) {
+    return !('isPrimary' in e) || e.isPrimary;
+}
+
+function beginPress(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!isPrimaryPointer(e)) return;
+    if (activePointerId !== null) return;
+    activePointerId = 'pointerId' in e ? e.pointerId : 'legacy';
+    if (e && e.currentTarget && e.currentTarget.setPointerCapture && 'pointerId' in e) {
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+    }
+    SoundFX.ensure();
+    if (state === 'IDLE') startCharge();
+}
+
+function endPress(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!isPrimaryPointer(e)) return;
+    const pointerId = 'pointerId' in e ? e.pointerId : 'legacy';
+    if (activePointerId !== null && activePointerId !== pointerId) return;
+    activePointerId = null;
+    if (e && e.currentTarget && e.currentTarget.releasePointerCapture && 'pointerId' in e) {
+        try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) {}
+    }
+    if (state === 'CHARGING') releaseJump();
+}
 
 function onKey(e) {
     if (e.code === 'Space' || e.key === ' ') {
         e.preventDefault();
         if (document.getElementById('revive-overlay').style.display === 'flex') return;
         if (document.getElementById('game-over').style.display === 'flex') return;
-        if (e.type === 'keydown' && state === 'IDLE') startCharge();
+        SoundFX.ensure();
+        if (e.type === 'keydown' && state === 'IDLE' && !e.repeat) startCharge();
         if (e.type === 'keyup' && state === 'CHARGING') releaseJump();
     }
 }
@@ -1085,10 +1116,10 @@ function init() {
     window.addEventListener('resize', resize);
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKey);
-    renderer.domElement.addEventListener('mousedown', onDown);
-    renderer.domElement.addEventListener('mouseup', onUp);
-    renderer.domElement.addEventListener('touchstart', onDown, { passive: false });
-    renderer.domElement.addEventListener('touchend', onUp, { passive: false });
+    renderer.domElement.addEventListener('pointerdown', beginPress);
+    renderer.domElement.addEventListener('pointerup', endPress);
+    renderer.domElement.addEventListener('pointercancel', endPress);
+    renderer.domElement.addEventListener('pointerleave', endPress);
     preRenderCities(startGame);
 }
 
