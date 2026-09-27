@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>跳跳乐 3D</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #1a1a2e; font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; user-select: none; }
+        #game-container { width: 100vw; height: 100vh; }
+        #score { position: fixed; top: 28px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 46px; font-weight: 700; text-shadow: 0 2px 20px rgba(0,0,0,0.3); z-index: 10; letter-spacing: 2px; pointer-events: none; }
+        #best-score { position: fixed; top: 24px; right: 28px; color: rgba(255,255,255,0.5); font-size: 15px; text-shadow: 0 1px 10px rgba(0,0,0,0.2); z-index: 10; pointer-events: none; }
+        #combo { position: fixed; top: 80px; left: 50%; transform: translateX(-50%); color: #FFD700; font-size: 22px; font-weight: 600; opacity: 0; transition: opacity 0.3s; z-index: 10; text-shadow: 0 0 20px rgba(255,215,0,0.5); pointer-events: none; }
+        #multiplier { position: fixed; top: 110px; left: 50%; transform: translateX(-50%); color: #FF6F00; font-size: 28px; font-weight: 800; display: none; z-index: 10; text-shadow: 0 0 25px rgba(255,111,0,0.6); pointer-events: none; }
+        #power-bg { position: fixed; bottom: 55px; left: 50%; transform: translateX(-50%); width: 260px; height: 6px; background: rgba(255,255,255,0.12); border-radius: 3px; z-index: 10; display: none; overflow: hidden; }
+        #power-fill { height: 100%; width: 0%; border-radius: 3px; background: linear-gradient(90deg, #4CAF50, #FFC107, #FF5722); transition: width 0.04s linear; }
+        #tip { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.25); font-size: 13px; z-index: 10; letter-spacing: 1px; pointer-events: none; }
+        .overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 30; }
+        #revive-overlay { display: none; background: rgba(0,0,0,0.55); z-index: 25; backdrop-filter: blur(4px); }
+        #revive-overlay .rv-box { background: rgba(255,255,255,0.06); border: 1.5px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 32px 44px; text-align: center; }
+        #revive-overlay .rv-box p { color: #fff; font-size: 22px; margin-bottom: 20px; letter-spacing: 2px; }
+        #city-name { position: fixed; bottom: 24px; right: 28px; color: rgba(255,255,255,0.55); font-size: 15px; z-index: 10; letter-spacing: 2px; text-shadow: 0 1px 6px rgba(0,0,0,0.3); display: none; pointer-events: none; }
+        .rv-btn { color: #fff; font-size: 16px; padding: 10px 32px; border-radius: 6px; cursor: pointer; transition: all 0.3s; background: transparent; border: 1.5px solid rgba(255,255,255,0.2); margin: 0 8px; }
+        .rv-btn:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.5); }
+        .rv-btn.primary { background: rgba(76,175,80,0.2); border-color: rgba(76,175,80,0.4); }
+        .rv-btn.primary:hover { background: rgba(76,175,80,0.35); border-color: rgba(76,175,80,0.7); }
+        #char-select { background: linear-gradient(135deg, #0f0c29, #302b63, #24243e); }
+        #char-select .title { color: #fff; font-size: 56px; font-weight: 200; letter-spacing: 8px; margin-bottom: 6px; }
+        #char-select .sub { color: rgba(255,255,255,0.4); font-size: 16px; margin-bottom: 30px; letter-spacing: 2px; }
+        .char-grid { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; max-width: 520px; }
+        .char-opt { width: 68px; cursor: pointer; border: 2px solid rgba(255,255,255,0.12); border-radius: 10px; transition: all 0.25s; display: flex; flex-direction: column; align-items: center; padding: 10px 6px 6px; background: rgba(255,255,255,0.03); }
+        .char-opt:hover { transform: scale(1.08); border-color: rgba(255,255,255,0.5); background: rgba(255,255,255,0.08); }
+        .char-opt .inner { width: 36px; height: 36px; border-radius: 50%; }
+        .char-label { color: rgba(255,255,255,0.6); font-size: 11px; margin-top: 4px; white-space: nowrap; }
+        #char-select .hint { color: rgba(255,255,255,0.2); font-size: 13px; margin-top: 30px; letter-spacing: 1px; }
+        #game-over { display: none; background: rgba(0,0,0,0.7); backdrop-filter: blur(6px); }
+        #game-over h1 { color: #fff; font-size: 48px; margin-bottom: 8px; letter-spacing: 6px; font-weight: 300; }
+        #game-over .fs { color: #FFD700; font-size: 68px; font-weight: 700; margin: 6px 0 4px; }
+        #game-over .lb { color: rgba(255,255,255,0.4); font-size: 14px; margin-bottom: 4px; }
+        #game-over .bst { color: rgba(255,255,255,0.6); font-size: 18px; margin-bottom: 28px; }
+        #game-over .rbtn { color: #fff; font-size: 17px; padding: 12px 44px; border: 1.5px solid rgba(255,255,255,0.25); border-radius: 6px; cursor: pointer; transition: all 0.3s; background: transparent; }
+        #game-over .rbtn:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.5); }
+        @media (max-width: 600px) {
+            #score { font-size: 30px; top: 18px; }
+            #char-select .title { font-size: 36px; }
+            #game-over h1 { font-size: 32px; }
+            #game-over .fs { font-size: 44px; }
+            .char-opt { width: 56px; padding: 8px 4px 4px; }
+            .char-opt .inner { width: 28px; height: 28px; }
+            .char-label { font-size: 10px; }
+            #power-bg { width: 200px; }
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+
+    <div id="score">0</div>
+    <div id="best-score">最高分: 0</div>
+    <div id="combo"></div>
+    <div id="multiplier"></div>
+    <div id="power-bg"><div id="power-fill"></div></div>
+    <div id="tip">按住空格蓄力 · 松开跳跃</div>
+    <div id="city-name"></div>
+
+    <div id="char-select" class="overlay">
+        <div class="title">跳跳乐</div>
+        <div class="sub">选择你的角色</div>
+        <div class="char-grid" id="char-grid"></div>
+        <div class="hint">点击角色开始游戏</div>
+    </div>
+
+    <div id="revive-overlay" class="overlay">
+        <div class="rv-box">
+            <p>是否复活继续？</p>
+            <div><button class="rv-btn primary" id="rv-yes">复活</button><button class="rv-btn" id="rv-no">结束</button></div>
+        </div>
+    </div>
+
+    <div id="game-over" class="overlay">
+        <h1>游戏结束</h1>
+        <div class="lb">得分</div>
+        <div class="fs" id="final-score">0</div>
+        <div class="bst">最高分: <span id="best-final">0</span></div>
+        <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap;justify-content:center;">
+            <div class="rbtn" id="restart-btn">重新开始</div>
+            <div class="rbtn" id="char-select-btn">重新选择角色</div>
+        </div>
+    </div>
+
+    <script src="js/three.min.js"></script>
+    <script src="js/images-data.js"></script>
+    <script src="js/game.js"></script>
+</body>
+</html>
