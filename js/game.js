@@ -42,6 +42,8 @@ const CFG = {
     perfectRadius: 0.30, camFollowSpeed: 3.5, camOffset: new THREE.Vector3(-5, 6, 5),
     mobileCamOffset: new THREE.Vector3(-7.6, 8.2, 7.6), difficultyScale: 0.008, fallThreshold: -8,
     stageStep: 6, rookieJumps: 5, challengeScore: 150,
+    mobilePixelRatio: 1.35, desktopPixelRatio: 2, mobileOldPlatforms: 1, desktopOldPlatforms: 2,
+    mobileParticleScale: 0.55,
 };
 
 const PALETTE = [0x4FC3F7, 0x81C784, 0xFFB74D, 0xE57373, 0xBA68C8, 0x4DB6AC, 0xFF8A65, 0x26C6DA, 0x7986CB, 0xF06292, 0xAED581, 0xFFD54F];
@@ -49,10 +51,10 @@ const PALETTE = [0x4FC3F7, 0x81C784, 0xFFB74D, 0xE57373, 0xBA68C8, 0x4DB6AC, 0xF
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1a1a2e);
 const camera = new THREE.PerspectiveCamera(36, window.innerWidth / window.innerHeight, 0.1, 120);
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+const renderer = new THREE.WebGLRenderer({ antialias: !isPortraitMobile(), alpha: false, powerPreference: 'high-performance' });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isPortraitMobile() ? CFG.mobilePixelRatio : CFG.desktopPixelRatio));
+renderer.shadowMap.enabled = !isPortraitMobile();
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.shadowMap.bias = 0.0005;
 document.getElementById('game-container').appendChild(renderer.domElement);
@@ -61,7 +63,7 @@ const hemi = new THREE.HemisphereLight(0x87CEEB, 0x3a7bd5, 0.75);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xFFF5E6, 1.0);
 sun.position.set(6, 14, 8);
-sun.castShadow = true;
+sun.castShadow = !isPortraitMobile();
 sun.shadow.mapSize.width = 512;
 sun.shadow.mapSize.height = 512;
 sun.shadow.camera.near = 0.5;
@@ -579,6 +581,69 @@ function createStartPlats() {
     if (platforms.length > 1) updateArrow(platforms[0], platforms[1]);
 }
 
+function disposeSceneObject(obj) {
+    if (!obj) return;
+    obj.traverse(function (n) {
+        if (!n.isMesh && !n.isPoints && !n.isLine && !n.isSprite) return;
+        if (n.geometry) n.geometry.dispose();
+        if (n.material) {
+            const mats = Array.isArray(n.material) ? n.material : [n.material];
+            for (const mat of mats) {
+                if (mat.map) mat.map.dispose();
+                mat.dispose();
+            }
+        }
+    });
+    scene.remove(obj);
+}
+
+function clearParticlesAndText() {
+    for (const p of particles) disposeSceneObject(p.pts);
+    particles = [];
+    for (const t of textPopups) disposeSceneObject(t.sprite);
+    textPopups = [];
+}
+
+function clearPlatformObjects() {
+    for (const p of platforms) disposeSceneObject(p.mesh);
+    platforms = [];
+}
+
+function clearRunObjects(removeCharacter) {
+    hideJumpPreview();
+    if (arrowHelper) {
+        disposeSceneObject(arrowHelper);
+        arrowHelper = null;
+    }
+    clearPlatformObjects();
+    clearParticlesAndText();
+    jumpData = null; fallData = null; activePointerId = null;
+    if (removeCharacter && character) {
+        disposeSceneObject(character);
+        character = null; characterBody = null; headMesh = null;
+    }
+    if (bgGroup) bgGroup.visible = false;
+}
+
+function prunePlatformsForView() {
+    if (!platforms.length) return;
+    const mobile = isPortraitMobile();
+    const oldKeep = mobile ? CFG.mobileOldPlatforms : CFG.desktopOldPlatforms;
+    let keepStart = Math.max(0, curIdx - oldKeep);
+    const cur = platforms[curIdx], next = platforms[curIdx + 1], old = platforms[keepStart];
+    if (mobile && old && old !== cur) {
+        const oldCurD = Math.sqrt((old.x - cur.x) ** 2 + (old.z - cur.z) ** 2);
+        const oldNextD = next ? Math.sqrt((old.x - next.x) ** 2 + (old.z - next.z) ** 2) : Infinity;
+        if (oldCurD < 1.35 || oldNextD < 1.35) keepStart = curIdx;
+    }
+    const keepEnd = Math.min(platforms.length - 1, curIdx + 1);
+    for (let i = 0; i < platforms.length; i++) {
+        if (i < keepStart || i > keepEnd) disposeSceneObject(platforms[i].mesh);
+    }
+    platforms = platforms.slice(keepStart, keepEnd + 1);
+    curIdx -= keepStart;
+}
+
 function resetRunStats() {
     score = 0; streak = 0; maxStreak = 0; multiplier = 1; perfectCount = 0; hasRevived = false;
     citiesReached = 1; nextCity = 1; lastMissReason = ''; cameraShake = 0;
@@ -657,9 +722,9 @@ function updateArrow(from, to) {
     if (len < 0.01) return;
     dir.normalize();
     arrowHelper = new THREE.ArrowHelper(dir, new THREE.Vector3(from.x, 0.5, from.z), len * 0.85, to.color, 0.5, 0.25);
-    arrowHelper.line.material.opacity = 0.7;
+    arrowHelper.line.material.opacity = 0.38;
     arrowHelper.line.material.transparent = true;
-    arrowHelper.cone.material.opacity = 0.9;
+    arrowHelper.cone.material.opacity = 0.56;
     arrowHelper.cone.material.transparent = true;
     scene.add(arrowHelper);
 }
@@ -698,24 +763,24 @@ function updatePowerTarget() {
 function setPreviewColor(color) {
     if (previewLine) {
         previewLine.material.color.setHex(color);
-        previewLine.material.opacity = color === 0xFF6B6B ? 0.42 : 0.78;
+        previewLine.material.opacity = color === 0xFF6B6B ? 0.26 : 0.48;
     }
     if (previewRing) {
         previewRing.material.color.setHex(color);
-        previewRing.material.opacity = color === 0xFF6B6B ? 0.34 : 0.78;
+        previewRing.material.opacity = color === 0xFF6B6B ? 0.18 : 0.34;
     }
 }
 
 function ensureJumpPreview() {
     if (!previewLine) {
         const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
-        previewLine = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x4FC3F7, transparent: true, opacity: 0.72, depthWrite: false }));
+        previewLine = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x4FC3F7, transparent: true, opacity: 0.46, depthWrite: false }));
         scene.add(previewLine);
     }
     if (!previewRing) {
         previewRing = new THREE.Mesh(
-            new THREE.RingGeometry(0.28, 0.38, 36),
-            new THREE.MeshBasicMaterial({ color: 0x4FC3F7, transparent: true, opacity: 0.76, side: THREE.DoubleSide, depthWrite: false })
+            new THREE.RingGeometry(0.24, 0.32, 36),
+            new THREE.MeshBasicMaterial({ color: 0x4FC3F7, transparent: true, opacity: 0.34, side: THREE.DoubleSide, depthWrite: false })
         );
         previewRing.rotation.x = -PI / 2;
         scene.add(previewRing);
@@ -894,7 +959,8 @@ function onLand(plat, dist) {
     }
     state = 'IDLE';
     jumpData = null;
-    while (platforms.length <= curIdx + 2) genNextPlat();
+    while (platforms.length <= curIdx + 1) genNextPlat();
+    prunePlatformsForView();
     if (platforms[curIdx + 1]) updateArrow(platforms[curIdx], platforms[curIdx + 1]);
 }
 
@@ -936,6 +1002,7 @@ function showGameOver() {
 }
 
 function spawnParticles(x, y, z, color, count, isPerfect) {
+    count = Math.max(isPerfect ? 18 : 10, Math.floor(count * (isPortraitMobile() ? CFG.mobileParticleScale : 1)));
     const geo = new THREE.BufferGeometry();
     const pos = new Float32Array(count * 3);
     const cols = new Float32Array(count * 3);
@@ -1026,6 +1093,8 @@ function updateTextPopups(dt) {
 let bgGroup, cloudMesh, cloudMesh2, scanMesh, scanMesh2, dotGrid, dataStream;
 
 function initDynamicBg() {
+    if (bgGroup) { bgGroup.visible = true; return; }
+    const mobile = isPortraitMobile();
     bgGroup = new THREE.Group();
     scene.add(bgGroup);
     // --- Tech clouds (cyan glow) ---
@@ -1045,12 +1114,12 @@ function initDynamicBg() {
     const tex = new THREE.CanvasTexture(c);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.repeat.set(2, 1);
-    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide, fog: false, blending: THREE.AdditiveBlending });
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: mobile ? 0.18 : 0.30, depthWrite: false, side: THREE.DoubleSide, fog: false, blending: THREE.AdditiveBlending });
     cloudMesh = new THREE.Mesh(new THREE.PlaneGeometry(60, 18), mat);
     cloudMesh.position.set(0, 5, -12);
     bgGroup.add(cloudMesh);
     const tex2 = tex.clone(); tex2.repeat.set(3, 1.5);
-    const mat2 = new THREE.MeshBasicMaterial({ map: tex2, transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide, fog: false, blending: THREE.AdditiveBlending });
+    const mat2 = new THREE.MeshBasicMaterial({ map: tex2, transparent: true, opacity: mobile ? 0.06 : 0.12, depthWrite: false, side: THREE.DoubleSide, fog: false, blending: THREE.AdditiveBlending });
     cloudMesh2 = new THREE.Mesh(new THREE.PlaneGeometry(70, 12), mat2);
     cloudMesh2.position.set(0, 8, -18);
     bgGroup.add(cloudMesh2);
@@ -1073,7 +1142,7 @@ function initDynamicBg() {
     const scanTex = new THREE.CanvasTexture(sc);
     scanTex.wrapS = scanTex.wrapT = THREE.RepeatWrapping;
     scanTex.repeat.set(1, 1);
-    const scanMat = new THREE.MeshBasicMaterial({ map: scanTex, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+    const scanMat = new THREE.MeshBasicMaterial({ map: scanTex, transparent: true, opacity: mobile ? 0.24 : 0.48, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
     scanMesh = new THREE.Mesh(new THREE.PlaneGeometry(50, 30), scanMat);
     scanMesh.position.set(0, 0, -9);
     bgGroup.add(scanMesh);
@@ -1092,14 +1161,14 @@ function initDynamicBg() {
     scx2.fillStyle = sgrd2; scx2.fillRect(0, 0, 8, 200);
     const scanTex2 = new THREE.CanvasTexture(sc2);
     scanTex2.wrapS = scanTex2.wrapT = THREE.RepeatWrapping;
-    const scanMat2 = scanMat.clone(); scanMat2.map = scanTex2; scanMat2.opacity = 0.35;
+    const scanMat2 = scanMat.clone(); scanMat2.map = scanTex2; scanMat2.opacity = mobile ? 0.14 : 0.30;
     scanMesh2 = new THREE.Mesh(new THREE.PlaneGeometry(40, 24), scanMat2);
     scanMesh2.position.set(0, -2, -10);
     scanMesh2.rotation.y = 0.05;
     bgGroup.add(scanMesh2);
 
     // --- Dot grid (neon grid intersections) ---
-    const dotCount = 80;
+    const dotCount = mobile ? 34 : 80;
     const dg = new THREE.BufferGeometry();
     const dp = new Float32Array(dotCount * 3);
     const dc = new Float32Array(dotCount * 3);
@@ -1113,12 +1182,12 @@ function initDynamicBg() {
     }
     dg.setAttribute('position', new THREE.BufferAttribute(dp, 3));
     dg.setAttribute('color', new THREE.BufferAttribute(dc, 3));
-    dotGrid = new THREE.Points(dg, new THREE.PointsMaterial({ size: 0.08, vertexColors: true, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+    dotGrid = new THREE.Points(dg, new THREE.PointsMaterial({ size: mobile ? 0.06 : 0.08, vertexColors: true, transparent: true, opacity: mobile ? 0.18 : 0.28, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
     dotGrid.userData = { baseSize: 0.08, phase: Math.random() * PI * 2 };
     bgGroup.add(dotGrid);
 
     // --- Data stream particles (upward moving dots) ---
-    const dsCount = 120;
+    const dsCount = mobile ? 48 : 120;
     const dsg = new THREE.BufferGeometry();
     const dsp = new Float32Array(dsCount * 3);
     const dsc = new Float32Array(dsCount * 3);
@@ -1132,11 +1201,12 @@ function initDynamicBg() {
     }
     dsg.setAttribute('position', new THREE.BufferAttribute(dsp, 3));
     dsg.setAttribute('color', new THREE.BufferAttribute(dsc, 3));
-    dataStream = new THREE.Points(dsg, new THREE.PointsMaterial({ size: 0.07, vertexColors: true, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+    dataStream = new THREE.Points(dsg, new THREE.PointsMaterial({ size: mobile ? 0.055 : 0.07, vertexColors: true, transparent: true, opacity: mobile ? 0.22 : 0.36, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
     bgGroup.add(dataStream);
 }
 
 function updateDynamicBg(dt, time) {
+    if (!bgGroup || !bgGroup.visible) return;
     if (bgGroup && camera) {
         bgGroup.position.x = camera.position.x;
         bgGroup.position.z = camera.position.z;
@@ -1281,24 +1351,16 @@ function buildCharSelect() {
 
 function selectChar(idx) {
     if (state !== 'SELECT') return;
-    if (platforms.length > 0) {
-        for (const p of platforms) { scene.remove(p.mesh);
-            p.mesh.traverse(function(n){if(n.isMesh){n.geometry&&n.geometry.dispose();n.material&&n.material.dispose();}}); }
-        platforms = [];
-        for (const p of particles) { scene.remove(p.pts);
-            p.pts.geometry.dispose(); p.pts.material.dispose(); }
-        particles = [];
-        if (arrowHelper) { scene.remove(arrowHelper); arrowHelper = null; }
-        hideJumpPreview();
-        resetRunStats();
-        curIdx = 0; curCity = 0;
-        resetRunUI();
-    }
+    clearRunObjects(true);
+    resetRunStats();
+    power = 0; curIdx = 0; curCity = 0;
+    resetRunUI();
     rebuildCharacter(idx);
     charType = idx;
     document.getElementById('char-select').style.display = 'none';
     document.getElementById('tip').style.display = 'block';
     state = 'IDLE';
+    initDynamicBg();
     createStartPlats();
     setCityTheme(0);
     resetCameraView();
@@ -1331,18 +1393,13 @@ function restart() {
     resetRunStats();
     power = 0; curIdx = 0; curCity = 0;
     state = 'IDLE'; jumpData = null; fallData = null;
-    for (const p of platforms) { scene.remove(p.mesh);
-        p.mesh.traverse(function (n) { if (n.isMesh) { n.geometry && n.geometry.dispose(); n.material && n.material.dispose(); } }); }
-    platforms = [];
-    for (const p of particles) { scene.remove(p.pts);
-        p.pts.geometry.dispose();
-        p.pts.material.dispose(); }
-    particles = [];
-    if (arrowHelper) { scene.remove(arrowHelper);
-        arrowHelper = null; }
     hideJumpPreview();
+    clearPlatformObjects();
+    clearParticlesAndText();
+    if (arrowHelper) { disposeSceneObject(arrowHelper); arrowHelper = null; }
     resetRunUI();
     setCityTheme(0);
+    initDynamicBg();
     createStartPlats();
     resetCameraView();
     updateStageUI();
@@ -1393,6 +1450,9 @@ function onKey(e) {
 
 function resize() {
     updateCameraProfile();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isPortraitMobile() ? CFG.mobilePixelRatio : CFG.desktopPixelRatio));
+    renderer.shadowMap.enabled = !isPortraitMobile();
+    sun.castShadow = !isPortraitMobile();
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
@@ -1406,7 +1466,11 @@ function init() {
         if (state !== 'GAME_OVER') return;
         document.getElementById('game-over').style.display = 'none';
         document.getElementById('char-select').style.display = 'flex';
-        hideJumpPreview();
+        clearRunObjects(true);
+        resetRunStats();
+        curIdx = 0; curCity = 0; power = 0;
+        resetRunUI();
+        setCityTheme(0);
         document.getElementById('miss-hint').classList.remove('show');
         state = 'SELECT';
     });
@@ -1426,9 +1490,6 @@ function startGame() {
     resetRunStats();
     resetRunUI();
     setCityTheme(0);
-    rebuildCharacter(0);
-    createStartPlats();
-    initDynamicBg();
     resetCameraView();
     document.getElementById('best-score').textContent = '最高分: ' + bestScore;
     updateStageUI();
