@@ -58,10 +58,11 @@
         #game-over .rbtn.primary { background: linear-gradient(135deg, rgba(79,195,247,0.28), rgba(255,213,79,0.20)); border-color: rgba(79,195,247,0.58); box-shadow: 0 0 24px rgba(79,195,247,0.2); }
         #game-over .rbtn:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.5); }
         @media (max-width: 600px) {
-            #score { font-size: 30px; top: 18px; }
+            #score { font-size: 30px; top: 18px; text-shadow: 0 2px 12px rgba(0,0,0,0.24); }
             #best-score { top: 18px; right: 16px; font-size: 12px; opacity: 0.72; }
-            #stage-goal { top: 18px; left: 16px; min-width: 118px; font-size: 11px; }
+            #stage-goal { top: 18px; left: 16px; min-width: 118px; font-size: 11px; text-shadow: 0 1px 8px rgba(0,0,0,0.24); }
             #stage-goal .stage-bar { width: 106px; height: 4px; margin-top: 5px; }
+            #stage-goal .stage-fill { box-shadow: 0 0 8px rgba(79,195,247,0.32); }
             #stage-toast { font-size: 17px; padding: 10px 18px; white-space: nowrap; }
             #char-select .title { font-size: 36px; }
             #game-over h1 { font-size: 32px; }
@@ -73,7 +74,7 @@
             .char-opt { width: 56px; padding: 8px 4px 4px; }
             .char-opt .inner { width: 28px; height: 28px; }
             .char-label { font-size: 10px; }
-            #power-bg { width: 230px; height: 12px; bottom: 70px; }
+            #power-bg { width: 230px; height: 12px; bottom: 70px; box-shadow: 0 0 0 1px rgba(255,255,255,0.07), 0 0 14px rgba(79,195,247,0.14); }
             #tip { bottom: 42px; font-size: 13px; color: rgba(255,255,255,0.46); }
             #city-name { bottom: 18px; right: 18px; font-size: 12px; opacity: 0.7; }
             #miss-hint { bottom: 112px; width: max-content; max-width: 86vw; font-size: 13px; }
