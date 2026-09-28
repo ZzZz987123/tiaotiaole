@@ -41,7 +41,7 @@ const CFG = {
     jumpMinDist: 0.3, jumpMaxDist: 8.0, powerRate: 0.4, chargeSquash: 0.55,
     perfectRadius: 0.30, camFollowSpeed: 3.5, camOffset: new THREE.Vector3(-5, 6, 5),
     mobileCamOffset: new THREE.Vector3(-7.6, 8.2, 7.6), difficultyScale: 0.008, fallThreshold: -8,
-    stageStep: 6, rookieJumps: 5,
+    stageStep: 6, rookieJumps: 5, challengeScore: 150,
 };
 
 const PALETTE = [0x4FC3F7, 0x81C784, 0xFFB74D, 0xE57373, 0xBA68C8, 0x4DB6AC, 0xFF8A65, 0x26C6DA, 0x7986CB, 0xF06292, 0xAED581, 0xFFD54F];
@@ -83,8 +83,11 @@ let platforms = [], curIdx = 0;
 let character, characterBody, headMesh, arrowHelper, previewLine, previewRing, bodyY = 0.36, headY = 0.52;
 let jumpData = null, fallData = null, particles = [];
 let citiesReached = 1, nextCity = 1, cameraShake = 0, lastMissReason = '';
+let highChallengeShown = false, lastPlatDir = null;
 
 function lerp(a, b, t) { return a + (b - a) * t; }
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function easeOutCubic(t) { return 1 - Math.pow(1 - clamp(t, 0, 1), 3); }
 
 // ==================== CITY BACKGROUNDS ====================
 
@@ -485,9 +488,30 @@ regChar('kitty', 'Kitty', 0xFF8A80, () => {
 
 let platRnd = rngFn(Date.now() % 99999 + 37);
 
+function getDifficultyProfile() {
+    // After 150, increase precision pressure while capping distance so mobile framing stays fair.
+    const challenge = easeOutCubic((score - CFG.challengeScore) / 170);
+    const elite = easeOutCubic((score - 200) / 180);
+    const earlyScale = Math.min(1 + score * CFG.difficultyScale, 1.42);
+    const challengeScale = 1.43 + challenge * 0.09;
+    return {
+        challenge,
+        elite,
+        distMultiplier: score >= CFG.challengeScore ? challengeScale : earlyScale,
+        distCap: score >= CFG.challengeScore ? lerp(4.35, 4.58, challenge) : 4.25,
+        platformScale: score >= CFG.challengeScore ? lerp(0.90, 0.83, challenge) : 1,
+        tinyPlatformScale: lerp(0.78, 0.72, elite),
+        tinyPlatformChance: score >= 200 ? lerp(0.08, 0.18, elite) : 0,
+        perfectRadius: Math.max(0.22, CFG.perfectRadius * (1 - challenge * 0.18 - elite * 0.07)),
+        sameDirChance: lerp(0.50, 0.68, challenge),
+    };
+}
+
 function createPlatform(x, z, color, isBig) {
     const rookie = !isBig && score < CFG.rookieJumps;
-    const size = isBig ? 1.8 : (rookie ? CFG.platformSize * 1.16 : (score >= 150 ? CFG.platformSize * 0.85 : CFG.platformSize));
+    const diff = getDifficultyProfile();
+    const tinyLatePlatform = !isBig && diff.tinyPlatformChance > 0 && platRnd() < diff.tinyPlatformChance;
+    const size = isBig ? 1.8 : (rookie ? CFG.platformSize * 1.16 : CFG.platformSize * (tinyLatePlatform ? diff.tinyPlatformScale : diff.platformScale));
     const h = isBig ? 0.55 : CFG.platformHeight;
     const c = new THREE.Color(color);
     const mat = new THREE.MeshStandardMaterial({ color: c.getHex(), roughness: 0.22, metalness: 0.08, emissive: c.getHex(), emissiveIntensity: isBig ? 0.07 : 0.12 });
@@ -558,6 +582,7 @@ function createStartPlats() {
 function resetRunStats() {
     score = 0; streak = 0; maxStreak = 0; multiplier = 1; perfectCount = 0; hasRevived = false;
     citiesReached = 1; nextCity = 1; lastMissReason = ''; cameraShake = 0;
+    highChallengeShown = false; lastPlatDir = null;
 }
 
 function updateStageUI() {
@@ -608,18 +633,19 @@ function resetRunUI() {
 
 function genNextPlat() {
     const last = platforms[platforms.length - 1];
-    const dir = Math.random() > 0.5 ? 'x' : 'z';
-    const ds = Math.min(1 + score * CFG.difficultyScale, 1.5);
-    const hard = score >= 150 ? 0.35 : 0;
+    const diff = getDifficultyProfile();
+    let dir = Math.random() > 0.5 ? 'x' : 'z';
+    if (lastPlatDir && score >= CFG.challengeScore && Math.random() < diff.sameDirChance) dir = lastPlatDir;
     let minD = CFG.platformMinDist, maxD = CFG.platformMaxDist;
     if (score < 3) { minD = 1.45; maxD = 2.05; }
     else if (score < CFG.rookieJumps) { minD = 1.55; maxD = 2.35; }
-    const d = (minD + Math.random() * (maxD - minD)) * Math.min(ds + hard, 1.85);
+    const d = Math.min((minD + Math.random() * (maxD - minD)) * diff.distMultiplier, diff.distCap);
     let nx = last.x, nz = last.z;
     if (dir === 'x') nx += d;
     else nz += d;
     const col = PALETTE[Math.floor(Math.random() * PALETTE.length)];
     platforms.push(createPlatform(nx, nz, col, false));
+    lastPlatDir = dir;
 }
 
 function updateArrow(from, to) {
@@ -649,7 +675,7 @@ function getJumpMetrics(pwr) {
     const px = cur.x + ux * jumpD, pz = cur.z + uz * jumpD;
     const dist = Math.sqrt((px - nxt.x) ** 2 + (pz - nxt.z) ** 2);
     const safe = isOnPlat(px, pz, nxt);
-    const perfect = dist < CFG.perfectRadius;
+    const perfect = dist < getDifficultyProfile().perfectRadius;
     return { cur, nxt, totalD, jumpD, px, pz, dist, safe, perfect };
 }
 
@@ -824,7 +850,7 @@ function onLand(plat, dist) {
     maxStreak = Math.max(maxStreak, streak);
     multiplier = streak >= 6 ? 3 : streak >= 3 ? 2 : 1;
     let pts = 1 * multiplier;
-    const perfect = dist < CFG.perfectRadius;
+    const perfect = dist < getDifficultyProfile().perfectRadius;
     if (perfect) {
         perfectCount++;
         pts++;
@@ -839,7 +865,9 @@ function onLand(plat, dist) {
     if (streak === 3) { spawnText(plat.x, 0.8, plat.z, '连击 x2!', '#4FC3F7', 30); cameraShake = Math.max(cameraShake, 0.08); }
     else if (streak === 6) { spawnText(plat.x, 1.0, plat.z, '超神连击 x3!', '#FF6F00', 36); cameraShake = Math.max(cameraShake, 0.12); }
     else if (streak === 10) { spawnText(plat.x, 1.2, plat.z, '不可思议!', '#E53935', 40); cameraShake = Math.max(cameraShake, 0.14); }
+    const beforeScore = score;
     score += pts;
+    const challengeUnlocked = !highChallengeShown && beforeScore < CFG.challengeScore && score >= CFG.challengeScore;
     document.getElementById('score').textContent = score;
     const multEl = document.getElementById('multiplier');
     if (multiplier > 1) { multEl.textContent = 'x' + multiplier; multEl.style.display = 'block'; clearTimeout(window._mt); window._mt = setTimeout(() => { multEl.style.display = 'none'; }, 2000); }
@@ -857,6 +885,12 @@ function onLand(plat, dist) {
         showStageToast('抵达 ' + CITIES[nxt]);
     } else {
         updateStageUI();
+    }
+    if (challengeUnlocked) {
+        highChallengeShown = true;
+        SoundFX.stage();
+        cameraShake = Math.max(cameraShake, 0.16);
+        showStageToast('高空挑战开始');
     }
     state = 'IDLE';
     jumpData = null;
@@ -1138,6 +1172,7 @@ function updateDynamicBg(dt, time) {
 
 let camPos = new THREE.Vector3(-5, 6, 5);
 let camLook = new THREE.Vector3(0, 0.3, 0);
+let camDistanceFactor = 0;
 
 function isPortraitMobile() {
     return window.innerWidth <= 720 && window.innerHeight > window.innerWidth;
@@ -1145,6 +1180,44 @@ function isPortraitMobile() {
 
 function getCameraOffset() {
     return isPortraitMobile() ? CFG.mobileCamOffset : CFG.camOffset;
+}
+
+function getCameraFrameTarget() {
+    const mobile = isPortraitMobile();
+    const cur = platforms[curIdx];
+    const nxt = platforms[curIdx + 1];
+    const base = character ? character.position : new THREE.Vector3(cur ? cur.x : 0, cur ? cur.height : 0, cur ? cur.z : 0);
+    let target = new THREE.Vector3(base.x, 0.35, base.z);
+    let dist = 0;
+    if (cur && nxt) {
+        dist = Math.sqrt((nxt.x - cur.x) ** 2 + (nxt.z - cur.z) ** 2);
+        const nextBias = state === 'JUMPING' ? (mobile ? 0.34 : 0.28) : (mobile ? 0.54 : 0.40);
+        target.x = lerp(base.x, nxt.x, nextBias);
+        target.z = lerp(base.z, nxt.z, nextBias);
+        target.y = 0.38;
+    }
+    const distanceFactor = clamp((dist - 2.45) / 2.25, 0, 1);
+    return { target, distanceFactor };
+}
+
+function getResponsiveCameraOffset(distanceFactor) {
+    const mobile = isPortraitMobile();
+    const off = getCameraOffset().clone();
+    const pull = 1 + distanceFactor * (mobile ? 0.26 : 0.12);
+    off.x *= pull;
+    off.z *= pull;
+    off.y += distanceFactor * (mobile ? 2.25 : 0.9);
+    return off;
+}
+
+function stepVector(current, target, speed, dt, maxStep) {
+    // Clamp per-frame movement so newly generated far platforms do not snap the camera.
+    const delta = target.clone().sub(current);
+    const f = 1 - Math.exp(-speed * dt);
+    const step = delta.multiplyScalar(f);
+    const len = step.length();
+    if (len > maxStep) step.multiplyScalar(maxStep / len);
+    current.add(step);
 }
 
 function updateCameraProfile() {
@@ -1155,19 +1228,24 @@ function updateCameraProfile() {
 
 function resetCameraView() {
     updateCameraProfile();
-    const off = getCameraOffset();
-    camera.position.set(off.x, off.y, off.z);
-    camera.lookAt(0, 0, 0);
-    camPos.set(off.x, off.y, off.z);
-    camLook.set(0, 0.3, 0);
+    const frame = getCameraFrameTarget();
+    camDistanceFactor = frame.distanceFactor;
+    const off = getResponsiveCameraOffset(camDistanceFactor);
+    const pos = new THREE.Vector3(frame.target.x + off.x, off.y, frame.target.z + off.z);
+    camera.position.copy(pos);
+    camera.lookAt(frame.target);
+    camPos.copy(pos);
+    camLook.copy(frame.target);
 }
 
 function updateCamera(dt) {
-    const target = character ? character.position : new THREE.Vector3(0, 0, 0);
-    const off = getCameraOffset();
-    const want = new THREE.Vector3(target.x + off.x, off.y, target.z + off.z);
-    const f = Math.min(1, CFG.camFollowSpeed * dt);
-    camPos.lerp(want, f);
+    const frame = getCameraFrameTarget();
+    camDistanceFactor = lerp(camDistanceFactor, frame.distanceFactor, 1 - Math.exp(-2.6 * dt));
+    const off = getResponsiveCameraOffset(camDistanceFactor);
+    const want = new THREE.Vector3(frame.target.x + off.x, off.y, frame.target.z + off.z);
+    const maxPosStep = (isPortraitMobile() ? 15 : 11) * Math.max(dt, 0.001);
+    const maxLookStep = (isPortraitMobile() ? 10 : 8) * Math.max(dt, 0.001);
+    stepVector(camPos, want, CFG.camFollowSpeed, dt, maxPosStep);
     camera.position.copy(camPos);
     if (cameraShake > 0) {
         const amp = cameraShake * 0.12;
@@ -1176,8 +1254,7 @@ function updateCamera(dt) {
         camera.position.z += (Math.random() - 0.5) * amp;
         cameraShake = Math.max(0, cameraShake - dt);
     }
-    const lt = new THREE.Vector3(target.x, 0.3, target.z);
-    camLook.lerp(lt, f);
+    stepVector(camLook, frame.target, CFG.camFollowSpeed + 0.8, dt, maxLookStep);
     camera.lookAt(camLook);
 }
 
