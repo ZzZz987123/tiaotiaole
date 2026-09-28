@@ -29,6 +29,9 @@ const SoundFX = {
     perfect() { this._t(523, 0.08, 'sine', 0.15);
         this._t(659, 0.08, 'sine', 0.12, 0.08);
         this._t(784, 0.12, 'sine', 0.12, 0.16); },
+    stage() { this._t(392, 0.08, 'triangle', 0.12);
+        this._t(523, 0.10, 'sine', 0.14, 0.08);
+        this._t(784, 0.16, 'sine', 0.12, 0.18); },
     fail() { this._t(380, 0.12, 'sawtooth', 0.12);
         this._t(190, 0.25, 'sawtooth', 0.12, 0.12); },
 };
@@ -37,7 +40,8 @@ const CFG = {
     platformMinDist: 1.5, platformMaxDist: 3.0, platformSize: 1.4, platformHeight: 0.35,
     jumpMinDist: 0.3, jumpMaxDist: 8.0, powerRate: 0.4, chargeSquash: 0.55,
     perfectRadius: 0.30, camFollowSpeed: 3.5, camOffset: new THREE.Vector3(-5, 6, 5),
-    difficultyScale: 0.008, fallThreshold: -8,
+    mobileCamOffset: new THREE.Vector3(-7.6, 8.2, 7.6), difficultyScale: 0.008, fallThreshold: -8,
+    stageStep: 6, rookieJumps: 5,
 };
 
 const PALETTE = [0x4FC3F7, 0x81C784, 0xFFB74D, 0xE57373, 0xBA68C8, 0x4DB6AC, 0xFF8A65, 0x26C6DA, 0x7986CB, 0xF06292, 0xAED581, 0xFFD54F];
@@ -74,10 +78,11 @@ scene.add(amb);
 const clock = new THREE.Clock();
 let state = 'SELECT', charType = 0;
 let score = 0, bestScore = parseInt(localStorage.getItem('jumpjoy_best')) || 0, power = 0;
-let streak = 0, multiplier = 1, hasRevived = false;
+let streak = 0, maxStreak = 0, multiplier = 1, perfectCount = 0, hasRevived = false;
 let platforms = [], curIdx = 0;
-let character, characterBody, headMesh, arrowHelper, bodyY = 0.36, headY = 0.52;
+let character, characterBody, headMesh, arrowHelper, previewLine, previewRing, bodyY = 0.36, headY = 0.52;
 let jumpData = null, fallData = null, particles = [];
+let citiesReached = 1, nextCity = 1, cameraShake = 0, lastMissReason = '';
 
 function lerp(a, b, t) { return a + (b - a) * t; }
 
@@ -94,6 +99,8 @@ function setCityTheme(idx) {
     scene.fog = new THREE.Fog(new THREE.Color(CITY_THEMES[idx].fog), 14, 28);
     document.getElementById('city-name').textContent = CITIES[idx];
     document.getElementById('city-name').style.display = 'block';
+    nextCity = (curCity + 1) % CITIES.length;
+    updateStageUI();
 }
 
 const CITY_THEMES = [
@@ -479,10 +486,11 @@ regChar('kitty', 'Kitty', 0xFF8A80, () => {
 let platRnd = rngFn(Date.now() % 99999 + 37);
 
 function createPlatform(x, z, color, isBig) {
-    const size = isBig ? 1.8 : (score >= 150 ? CFG.platformSize * 0.85 : CFG.platformSize);
+    const rookie = !isBig && score < CFG.rookieJumps;
+    const size = isBig ? 1.8 : (rookie ? CFG.platformSize * 1.16 : (score >= 150 ? CFG.platformSize * 0.85 : CFG.platformSize));
     const h = isBig ? 0.55 : CFG.platformHeight;
     const c = new THREE.Color(color);
-    const mat = new THREE.MeshStandardMaterial({ color: c.getHex(), roughness: 0.25, metalness: 0.05 });
+    const mat = new THREE.MeshStandardMaterial({ color: c.getHex(), roughness: 0.22, metalness: 0.08, emissive: c.getHex(), emissiveIntensity: isBig ? 0.07 : 0.12 });
     const type = isBig ? 0 : Math.floor(platRnd() * 4);
     let mesh, group = new THREE.Group();
     const hh = h / 2;
@@ -511,6 +519,11 @@ function createPlatform(x, z, color, isBig) {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     if (mesh) group.add(mesh);
+    const glowMat = new THREE.MeshBasicMaterial({ color: c.clone().offsetHSL(0, 0.15, 0.18).getHex(), transparent: true, opacity: 0.38, depthWrite: false });
+    const glow = new THREE.Mesh(new THREE.TorusGeometry(size * 0.58, 0.025, 6, 28), glowMat);
+    glow.position.y = hh + 0.02;
+    glow.rotation.x = PI / 2;
+    group.add(glow);
     group.position.set(x, 0, z);
     scene.add(group);
     const hitRadius = (type === 0 || type === 2) ? size * 0.48 : size * 0.50;
@@ -542,12 +555,66 @@ function createStartPlats() {
     if (platforms.length > 1) updateArrow(platforms[0], platforms[1]);
 }
 
+function resetRunStats() {
+    score = 0; streak = 0; maxStreak = 0; multiplier = 1; perfectCount = 0; hasRevived = false;
+    citiesReached = 1; nextCity = 1; lastMissReason = ''; cameraShake = 0;
+}
+
+function updateStageUI() {
+    const label = document.querySelector('#stage-goal .stage-label');
+    const prog = document.getElementById('stage-progress');
+    const fill = document.getElementById('stage-fill');
+    if (!label || !prog || !fill) return;
+    const p = score % CFG.stageStep;
+    label.textContent = '下一站: ' + CITIES[nextCity];
+    prog.textContent = p + '/' + CFG.stageStep;
+    fill.style.width = (p / CFG.stageStep * 100) + '%';
+}
+
+function showStageToast(text) {
+    const el = document.getElementById('stage-toast');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.add('show');
+    clearTimeout(window._stageToast);
+    window._stageToast = setTimeout(() => el.classList.remove('show'), 1300);
+}
+
+function showMissHint(text) {
+    const el = document.getElementById('miss-hint');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.add('show');
+    clearTimeout(window._missHint);
+    window._missHint = setTimeout(() => el.classList.remove('show'), 1800);
+}
+
+function getRankTitle() {
+    if (score >= 36 || maxStreak >= 12 || perfectCount >= 8) return '城市飞跃者';
+    if (score >= 18 || maxStreak >= 6 || perfectCount >= 4) return '霓虹跳跃者';
+    if (score >= 8 || maxStreak >= 3) return '稳定跳跃者';
+    return '天台新手';
+}
+
+function resetRunUI() {
+    document.getElementById('score').textContent = '0';
+    document.getElementById('combo').style.opacity = '0';
+    document.getElementById('multiplier').style.display = 'none';
+    document.getElementById('power-bg').style.display = 'none';
+    document.getElementById('miss-hint').classList.remove('show');
+    document.getElementById('stage-toast').classList.remove('show');
+    updateStageUI();
+}
+
 function genNextPlat() {
     const last = platforms[platforms.length - 1];
     const dir = Math.random() > 0.5 ? 'x' : 'z';
     const ds = Math.min(1 + score * CFG.difficultyScale, 1.5);
     const hard = score >= 150 ? 0.35 : 0;
-    const d = (CFG.platformMinDist + Math.random() * (CFG.platformMaxDist - CFG.platformMinDist)) * Math.min(ds + hard, 1.85);
+    let minD = CFG.platformMinDist, maxD = CFG.platformMaxDist;
+    if (score < 3) { minD = 1.45; maxD = 2.05; }
+    else if (score < CFG.rookieJumps) { minD = 1.55; maxD = 2.35; }
+    const d = (minD + Math.random() * (maxD - minD)) * Math.min(ds + hard, 1.85);
     let nx = last.x, nz = last.z;
     if (dir === 'x') nx += d;
     else nz += d;
@@ -571,22 +638,124 @@ function updateArrow(from, to) {
     scene.add(arrowHelper);
 }
 
+function getJumpMetrics(pwr) {
+    const cur = platforms[curIdx], nxt = platforms[curIdx + 1];
+    if (!cur || !nxt) return null;
+    const dx = nxt.x - cur.x, dz = nxt.z - cur.z;
+    const totalD = Math.sqrt(dx * dx + dz * dz);
+    if (totalD < 0.01) return null;
+    const jumpD = CFG.jumpMinDist + pwr * (CFG.jumpMaxDist - CFG.jumpMinDist);
+    const ux = dx / totalD, uz = dz / totalD;
+    const px = cur.x + ux * jumpD, pz = cur.z + uz * jumpD;
+    const dist = Math.sqrt((px - nxt.x) ** 2 + (pz - nxt.z) ** 2);
+    const safe = isOnPlat(px, pz, nxt);
+    const perfect = dist < CFG.perfectRadius;
+    return { cur, nxt, totalD, jumpD, px, pz, dist, safe, perfect };
+}
+
+function powerForDistance(dist) {
+    return Math.max(0, Math.min(1, (dist - CFG.jumpMinDist) / (CFG.jumpMaxDist - CFG.jumpMinDist)));
+}
+
+function updatePowerTarget() {
+    const m = getJumpMetrics(power);
+    const el = document.getElementById('power-target');
+    if (!m || !el) return;
+    const target = powerForDistance(m.totalD) * 100;
+    const spread = Math.max(8, (m.nxt.hitRadius / (CFG.jumpMaxDist - CFG.jumpMinDist)) * 180);
+    const width = Math.min(100, spread);
+    el.style.left = Math.min(100 - width, Math.max(0, target - width / 2)) + '%';
+    el.style.width = width + '%';
+    el.style.display = 'block';
+}
+
+function setPreviewColor(color) {
+    if (previewLine) {
+        previewLine.material.color.setHex(color);
+        previewLine.material.opacity = color === 0xFF6B6B ? 0.42 : 0.78;
+    }
+    if (previewRing) {
+        previewRing.material.color.setHex(color);
+        previewRing.material.opacity = color === 0xFF6B6B ? 0.34 : 0.78;
+    }
+}
+
+function ensureJumpPreview() {
+    if (!previewLine) {
+        const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+        previewLine = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x4FC3F7, transparent: true, opacity: 0.72, depthWrite: false }));
+        scene.add(previewLine);
+    }
+    if (!previewRing) {
+        previewRing = new THREE.Mesh(
+            new THREE.RingGeometry(0.28, 0.38, 36),
+            new THREE.MeshBasicMaterial({ color: 0x4FC3F7, transparent: true, opacity: 0.76, side: THREE.DoubleSide, depthWrite: false })
+        );
+        previewRing.rotation.x = -PI / 2;
+        scene.add(previewRing);
+    }
+}
+
+function updateJumpPreview() {
+    const m = getJumpMetrics(power);
+    if (!m) return;
+    ensureJumpPreview();
+    const pts = [];
+    const steps = 20;
+    const mh = 0.6 + Math.min(m.totalD * 0.4, 2.0);
+    for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const x = lerp(m.cur.x, m.px, t);
+        const z = lerp(m.cur.z, m.pz, t);
+        const y = m.cur.height + 4 * mh * t * (1 - t) + 0.08;
+        pts.push(new THREE.Vector3(x, y, z));
+    }
+    previewLine.geometry.dispose();
+    previewLine.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+    previewRing.position.set(m.px, m.nxt.height + 0.045, m.pz);
+    const ringScale = m.perfect ? 0.78 : 1;
+    previewRing.scale.set(ringScale, ringScale, ringScale);
+    setPreviewColor(m.perfect ? 0xFFD54F : (m.safe ? 0x4FC3F7 : 0xFF6B6B));
+    if (arrowHelper) arrowHelper.visible = false;
+}
+
+function resetPlatformPress() {
+    const cur = platforms[curIdx];
+    if (cur && cur.mesh) cur.mesh.position.y = 0;
+}
+
+function hideJumpPreview() {
+    if (previewLine) { scene.remove(previewLine); previewLine.geometry.dispose(); previewLine.material.dispose(); previewLine = null; }
+    if (previewRing) { scene.remove(previewRing); previewRing.geometry.dispose(); previewRing.material.dispose(); previewRing = null; }
+    const target = document.getElementById('power-target');
+    if (target) target.style.display = 'none';
+    if (arrowHelper) arrowHelper.visible = true;
+}
+
 function startCharge() {
     if (state !== 'IDLE') return;
     state = 'CHARGING';
     power = 0;
     document.getElementById('power-bg').style.display = 'block';
     document.getElementById('power-fill').style.width = '0%';
+    updatePowerTarget();
+    updateJumpPreview();
 }
 
 function updateCharge(dt) {
     if (state !== 'CHARGING') return;
     power = Math.min(power + CFG.powerRate * dt, 1.0);
-    document.getElementById('power-fill').style.width = (power * 100) + '%';
+    const fill = document.getElementById('power-fill');
+    fill.style.width = (power * 100) + '%';
+    fill.style.filter = power > 0.78 ? 'saturate(1.35)' : 'none';
+    updatePowerTarget();
+    updateJumpPreview();
     const s = 1 - (1 - CFG.chargeSquash) * power;
     characterBody.scale.set(1 / Math.sqrt(s), s, 1 / Math.sqrt(s));
     characterBody.position.y = bodyY * s;
     if (headMesh && headMesh !== characterBody) headMesh.position.y = headY * s;
+    const cur = platforms[curIdx];
+    if (cur && cur.mesh) cur.mesh.position.y = -0.035 * power;
     if (Math.random() < dt * 10) SoundFX.charge(power);
 }
 
@@ -594,6 +763,8 @@ function releaseJump() {
     if (state !== 'CHARGING') return;
     state = 'JUMPING';
     document.getElementById('power-bg').style.display = 'none';
+    hideJumpPreview();
+    resetPlatformPress();
     SoundFX.jump();
     const cur = platforms[curIdx],
         nxt = platforms[curIdx + 1];
@@ -631,11 +802,18 @@ function updateJump(dt) {
             }
         }
         if (landed) onLand(landed, landDist);
-        else onMiss();
+        else {
+            const target = jumpData.nxt;
+            const targetD = Math.sqrt((target.x - jumpData.sx) ** 2 + (target.z - jumpData.sz) ** 2);
+            const actualD = Math.sqrt((x - jumpData.sx) ** 2 + (z - jumpData.sz) ** 2);
+            lastMissReason = actualD < targetD ? '按得太短了，再多蓄一点' : '按得太久了，早点松手';
+            onMiss();
+        }
     }
 }
 
 function onLand(plat, dist) {
+    resetPlatformPress();
     character.position.y = plat.height;
     character.rotation.set(0, 0, 0);
     characterBody.position.y = bodyY;
@@ -643,21 +821,24 @@ function onLand(plat, dist) {
     if (headMesh && headMesh !== characterBody) headMesh.position.y = headY;
     curIdx = platforms.indexOf(plat);
     streak++;
+    maxStreak = Math.max(maxStreak, streak);
     multiplier = streak >= 6 ? 3 : streak >= 3 ? 2 : 1;
     let pts = 1 * multiplier;
     const perfect = dist < CFG.perfectRadius;
     if (perfect) {
+        perfectCount++;
         pts++;
-        spawnParticles(plat.x, 0.4, plat.z, plat.color, 40, true);
-        spawnParticles(plat.x, 0.4, plat.z, 0xFFD700, 30, true);
-        spawnParticles(plat.x, 0.4, plat.z, 0xFF6B6B, 20, true);
+        spawnParticles(plat.x, 0.4, plat.z, plat.color, 60, true);
+        spawnParticles(plat.x, 0.4, plat.z, 0xFFD700, 46, true);
+        spawnParticles(plat.x, 0.4, plat.z, 0xFF6B6B, 28, true);
         SoundFX.perfect();
+        cameraShake = Math.max(cameraShake, 0.12);
         const msgs = ['完美!','太棒了!','厉害!','漂亮!'];
         spawnText(plat.x, 1.2, plat.z, msgs[Math.floor(Math.random() * msgs.length)], '#FFD700', 34);
-    } else { spawnParticles(plat.x, 0.4, plat.z, plat.color, 20, false); SoundFX.land(); }
-    if (streak === 3) spawnText(plat.x, 0.8, plat.z, '连击x2!', '#4FC3F7', 26);
-    else if (streak === 6) spawnText(plat.x, 1.0, plat.z, '超神连击x3!', '#FF6F00', 30);
-    else if (streak === 10) spawnText(plat.x, 1.2, plat.z, '不可思议!', '#E53935', 36);
+    } else { spawnParticles(plat.x, 0.4, plat.z, plat.color, 26, false); SoundFX.land(); cameraShake = Math.max(cameraShake, 0.035); }
+    if (streak === 3) { spawnText(plat.x, 0.8, plat.z, '连击 x2!', '#4FC3F7', 30); cameraShake = Math.max(cameraShake, 0.08); }
+    else if (streak === 6) { spawnText(plat.x, 1.0, plat.z, '超神连击 x3!', '#FF6F00', 36); cameraShake = Math.max(cameraShake, 0.12); }
+    else if (streak === 10) { spawnText(plat.x, 1.2, plat.z, '不可思议!', '#E53935', 40); cameraShake = Math.max(cameraShake, 0.14); }
     score += pts;
     document.getElementById('score').textContent = score;
     const multEl = document.getElementById('multiplier');
@@ -667,9 +848,15 @@ function onLand(plat, dist) {
     document.getElementById('combo').style.opacity = '1';
     clearTimeout(window._ct);
     window._ct = setTimeout(() => { document.getElementById('combo').style.opacity = '0'; }, 1200);
-    if (score > 0 && score % 6 === 0) {
-        let nxt; do { nxt = Math.floor(Math.random() * CITIES.length); } while (nxt === curCity);
+    if (score > 0 && score % CFG.stageStep === 0) {
+        const nxt = nextCity;
         setCityTheme(nxt);
+        citiesReached++;
+        SoundFX.stage();
+        cameraShake = Math.max(cameraShake, 0.18);
+        showStageToast('抵达 ' + CITIES[nxt]);
+    } else {
+        updateStageUI();
     }
     state = 'IDLE';
     jumpData = null;
@@ -678,9 +865,13 @@ function onLand(plat, dist) {
 }
 
 function onMiss() {
+    hideJumpPreview();
+    resetPlatformPress();
     if (!hasRevived) {
         hasRevived = true;
         streak = 0; multiplier = 1;
+        const reason = lastMissReason || '差一点，再调整蓄力试试';
+        showMissHint(reason);
         const cur = platforms[curIdx];
         if (cur) {
             character.position.set(cur.x, cur.height, cur.z);
@@ -703,6 +894,10 @@ function showGameOver() {
     document.getElementById('final-score').textContent = score;
     document.getElementById('best-final').textContent = bestScore;
     document.getElementById('best-score').textContent = '最高分: ' + bestScore;
+    document.getElementById('final-max-streak').textContent = maxStreak;
+    document.getElementById('final-perfects').textContent = perfectCount;
+    document.getElementById('final-cities').textContent = citiesReached;
+    document.getElementById('rank-title').textContent = getRankTitle();
     document.getElementById('game-over').style.display = 'flex';
 }
 
@@ -944,12 +1139,43 @@ function updateDynamicBg(dt, time) {
 let camPos = new THREE.Vector3(-5, 6, 5);
 let camLook = new THREE.Vector3(0, 0.3, 0);
 
+function isPortraitMobile() {
+    return window.innerWidth <= 720 && window.innerHeight > window.innerWidth;
+}
+
+function getCameraOffset() {
+    return isPortraitMobile() ? CFG.mobileCamOffset : CFG.camOffset;
+}
+
+function updateCameraProfile() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.fov = isPortraitMobile() ? 43 : 36;
+    camera.updateProjectionMatrix();
+}
+
+function resetCameraView() {
+    updateCameraProfile();
+    const off = getCameraOffset();
+    camera.position.set(off.x, off.y, off.z);
+    camera.lookAt(0, 0, 0);
+    camPos.set(off.x, off.y, off.z);
+    camLook.set(0, 0.3, 0);
+}
+
 function updateCamera(dt) {
     const target = character ? character.position : new THREE.Vector3(0, 0, 0);
-    const want = new THREE.Vector3(target.x + CFG.camOffset.x, CFG.camOffset.y, target.z + CFG.camOffset.z);
+    const off = getCameraOffset();
+    const want = new THREE.Vector3(target.x + off.x, off.y, target.z + off.z);
     const f = Math.min(1, CFG.camFollowSpeed * dt);
     camPos.lerp(want, f);
     camera.position.copy(camPos);
+    if (cameraShake > 0) {
+        const amp = cameraShake * 0.12;
+        camera.position.x += (Math.random() - 0.5) * amp;
+        camera.position.y += (Math.random() - 0.5) * amp;
+        camera.position.z += (Math.random() - 0.5) * amp;
+        cameraShake = Math.max(0, cameraShake - dt);
+    }
     const lt = new THREE.Vector3(target.x, 0.3, target.z);
     camLook.lerp(lt, f);
     camera.lookAt(camLook);
@@ -986,11 +1212,10 @@ function selectChar(idx) {
             p.pts.geometry.dispose(); p.pts.material.dispose(); }
         particles = [];
         if (arrowHelper) { scene.remove(arrowHelper); arrowHelper = null; }
-        score = 0; streak = 0; multiplier = 1; hasRevived = false;
+        hideJumpPreview();
+        resetRunStats();
         curIdx = 0; curCity = 0;
-        document.getElementById('score').textContent = '0';
-        document.getElementById('combo').style.opacity = '0';
-        document.getElementById('multiplier').style.display = 'none';
+        resetRunUI();
     }
     rebuildCharacter(idx);
     charType = idx;
@@ -999,10 +1224,8 @@ function selectChar(idx) {
     state = 'IDLE';
     createStartPlats();
     setCityTheme(0);
-    camera.position.set(-5, 6, 5);
-    camera.lookAt(0, 0, 0);
-    camPos.set(-5, 6, 5);
-    camLook.set(0, 0.3, 0);
+    resetCameraView();
+    updateStageUI();
     SoundFX.ensure();
 }
 
@@ -1028,9 +1251,7 @@ function rebuildCharacter(idx) {
 
 function restart() {
     document.getElementById('game-over').style.display = 'none';
-    document.getElementById('score').textContent = '0';
-    document.getElementById('combo').style.opacity = '0';
-    score = 0; streak = 0; multiplier = 1; hasRevived = false;
+    resetRunStats();
     power = 0; curIdx = 0; curCity = 0;
     state = 'IDLE'; jumpData = null; fallData = null;
     for (const p of platforms) { scene.remove(p.mesh);
@@ -1042,12 +1263,12 @@ function restart() {
     particles = [];
     if (arrowHelper) { scene.remove(arrowHelper);
         arrowHelper = null; }
+    hideJumpPreview();
+    resetRunUI();
     setCityTheme(0);
     createStartPlats();
-    camera.position.set(-5, 6, 5);
-    camera.lookAt(0, 0, 0);
-    camPos.set(-5, 6, 5);
-    camLook.set(0, 0.3, 0);
+    resetCameraView();
+    updateStageUI();
 }
 
 // ==================== EVENTS ====================
@@ -1094,8 +1315,7 @@ function onKey(e) {
 }
 
 function resize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
+    updateCameraProfile();
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
@@ -1109,6 +1329,8 @@ function init() {
         if (state !== 'GAME_OVER') return;
         document.getElementById('game-over').style.display = 'none';
         document.getElementById('char-select').style.display = 'flex';
+        hideJumpPreview();
+        document.getElementById('miss-hint').classList.remove('show');
         state = 'SELECT';
     });
     document.getElementById('rv-yes').addEventListener('click', () => { document.getElementById('revive-overlay').style.display = 'none'; document.getElementById('combo').style.opacity = '0'; document.getElementById('multiplier').style.display = 'none'; });
@@ -1124,14 +1346,15 @@ function init() {
 }
 
 function startGame() {
+    resetRunStats();
+    resetRunUI();
     setCityTheme(0);
     rebuildCharacter(0);
     createStartPlats();
     initDynamicBg();
-    camera.position.set(-5, 6, 5);
-    camera.lookAt(0, 0, 0);
-    camPos.set(-5, 6, 5);
+    resetCameraView();
     document.getElementById('best-score').textContent = '最高分: ' + bestScore;
+    updateStageUI();
     document.getElementById('tip').style.display = 'none';
 }
 

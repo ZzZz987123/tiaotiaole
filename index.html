@@ -12,11 +12,20 @@
         #game-container canvas { touch-action: none; display: block; }
         #score { position: fixed; top: 28px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 46px; font-weight: 700; text-shadow: 0 2px 20px rgba(0,0,0,0.3); z-index: 10; letter-spacing: 2px; pointer-events: none; }
         #best-score { position: fixed; top: 24px; right: 28px; color: rgba(255,255,255,0.5); font-size: 15px; text-shadow: 0 1px 10px rgba(0,0,0,0.2); z-index: 10; pointer-events: none; }
+        #stage-goal { position: fixed; top: 24px; left: 28px; min-width: 150px; color: rgba(255,255,255,0.82); font-size: 13px; line-height: 1.25; z-index: 10; pointer-events: none; text-shadow: 0 2px 12px rgba(0,0,0,0.35); }
+        #stage-goal .stage-label { display: block; color: rgba(126,249,255,0.92); font-weight: 700; letter-spacing: 1px; }
+        #stage-goal .stage-bar { width: 132px; height: 4px; margin-top: 7px; border-radius: 999px; background: rgba(255,255,255,0.12); overflow: hidden; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); }
+        #stage-goal .stage-fill { width: 0%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #4FC3F7, #FFD54F); box-shadow: 0 0 14px rgba(79,195,247,0.55); transition: width 0.25s ease; }
+        #stage-toast { position: fixed; top: 42%; left: 50%; transform: translate(-50%, -50%) scale(0.94); padding: 12px 24px; border: 1px solid rgba(126,249,255,0.34); border-radius: 999px; color: #fff; background: rgba(5,14,28,0.54); box-shadow: 0 0 28px rgba(79,195,247,0.28); font-size: 20px; letter-spacing: 2px; z-index: 12; opacity: 0; pointer-events: none; transition: opacity 0.25s ease, transform 0.25s ease; }
+        #stage-toast.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
         #combo { position: fixed; top: 80px; left: 50%; transform: translateX(-50%); color: #FFD700; font-size: 22px; font-weight: 600; opacity: 0; transition: opacity 0.3s; z-index: 10; text-shadow: 0 0 20px rgba(255,215,0,0.5); pointer-events: none; }
         #multiplier { position: fixed; top: 110px; left: 50%; transform: translateX(-50%); color: #FF6F00; font-size: 28px; font-weight: 800; display: none; z-index: 10; text-shadow: 0 0 25px rgba(255,111,0,0.6); pointer-events: none; }
-        #power-bg { position: fixed; bottom: 55px; left: 50%; transform: translateX(-50%); width: 260px; height: 6px; background: rgba(255,255,255,0.12); border-radius: 3px; z-index: 10; display: none; overflow: hidden; }
+        #power-bg { position: fixed; bottom: 55px; left: 50%; transform: translateX(-50%); width: 280px; height: 10px; background: rgba(255,255,255,0.13); border-radius: 999px; z-index: 10; display: none; overflow: hidden; box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 0 22px rgba(79,195,247,0.22); }
         #power-fill { height: 100%; width: 0%; border-radius: 3px; background: linear-gradient(90deg, #4CAF50, #FFC107, #FF5722); transition: width 0.04s linear; }
-        #tip { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.25); font-size: 13px; z-index: 10; letter-spacing: 1px; pointer-events: none; }
+        #power-target { position: absolute; top: 0; height: 100%; left: 45%; width: 16%; border-left: 2px solid rgba(255,255,255,0.85); border-right: 2px solid rgba(255,255,255,0.85); background: rgba(255,255,255,0.12); box-shadow: 0 0 16px rgba(255,213,79,0.42); display: none; }
+        #tip { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.34); font-size: 13px; z-index: 10; letter-spacing: 1px; pointer-events: none; white-space: nowrap; }
+        #miss-hint { position: fixed; bottom: 94px; left: 50%; transform: translateX(-50%); padding: 8px 15px; border-radius: 999px; background: rgba(255,87,34,0.14); border: 1px solid rgba(255,183,77,0.28); color: rgba(255,244,220,0.92); font-size: 14px; z-index: 26; opacity: 0; pointer-events: none; transition: opacity 0.25s ease; text-shadow: 0 1px 8px rgba(0,0,0,0.35); }
+        #miss-hint.show { opacity: 1; }
         .overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 30; }
         #revive-overlay { display: none; background: rgba(0,0,0,0.55); z-index: 25; backdrop-filter: blur(4px); }
         #revive-overlay .rv-box { background: rgba(255,255,255,0.06); border: 1.5px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 32px 44px; text-align: center; }
@@ -39,18 +48,37 @@
         #game-over h1 { color: #fff; font-size: 48px; margin-bottom: 8px; letter-spacing: 6px; font-weight: 300; }
         #game-over .fs { color: #FFD700; font-size: 68px; font-weight: 700; margin: 6px 0 4px; }
         #game-over .lb { color: rgba(255,255,255,0.4); font-size: 14px; margin-bottom: 4px; }
-        #game-over .bst { color: rgba(255,255,255,0.6); font-size: 18px; margin-bottom: 28px; }
-        #game-over .rbtn { color: #fff; font-size: 17px; padding: 12px 44px; border: 1.5px solid rgba(255,255,255,0.25); border-radius: 6px; cursor: pointer; transition: all 0.3s; background: transparent; }
+        #game-over .bst { color: rgba(255,255,255,0.6); font-size: 18px; margin-bottom: 18px; }
+        .rank-title { color: #FFD54F; font-size: 24px; font-weight: 800; text-shadow: 0 0 18px rgba(255,213,79,0.35); margin-bottom: 14px; letter-spacing: 2px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(3, minmax(72px, 1fr)); gap: 10px; width: min(360px, 86vw); margin-bottom: 24px; }
+        .stat-card { border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 10px 8px; background: rgba(255,255,255,0.05); }
+        .stat-card span { display: block; color: rgba(255,255,255,0.42); font-size: 12px; margin-bottom: 4px; }
+        .stat-card strong { color: rgba(255,255,255,0.92); font-size: 20px; }
+        #game-over .rbtn { color: #fff; font-size: 17px; padding: 13px 44px; border: 1.5px solid rgba(255,255,255,0.25); border-radius: 8px; cursor: pointer; transition: all 0.3s; background: transparent; min-width: 148px; text-align: center; }
+        #game-over .rbtn.primary { background: linear-gradient(135deg, rgba(79,195,247,0.28), rgba(255,213,79,0.20)); border-color: rgba(79,195,247,0.58); box-shadow: 0 0 24px rgba(79,195,247,0.2); }
         #game-over .rbtn:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.5); }
         @media (max-width: 600px) {
             #score { font-size: 30px; top: 18px; }
+            #best-score { top: 18px; right: 16px; font-size: 12px; opacity: 0.72; }
+            #stage-goal { top: 18px; left: 16px; min-width: 118px; font-size: 11px; }
+            #stage-goal .stage-bar { width: 106px; height: 4px; margin-top: 5px; }
+            #stage-toast { font-size: 17px; padding: 10px 18px; white-space: nowrap; }
             #char-select .title { font-size: 36px; }
             #game-over h1 { font-size: 32px; }
             #game-over .fs { font-size: 44px; }
+            .stats-grid { grid-template-columns: repeat(3, 1fr); gap: 8px; width: 88vw; }
+            .stat-card { padding: 9px 4px; }
+            .stat-card strong { font-size: 18px; }
+            #game-over .rbtn { min-width: 140px; padding: 14px 22px; font-size: 16px; }
             .char-opt { width: 56px; padding: 8px 4px 4px; }
             .char-opt .inner { width: 28px; height: 28px; }
             .char-label { font-size: 10px; }
-            #power-bg { width: 200px; }
+            #power-bg { width: 230px; height: 12px; bottom: 70px; }
+            #tip { bottom: 42px; font-size: 13px; color: rgba(255,255,255,0.46); }
+            #city-name { bottom: 18px; right: 18px; font-size: 12px; opacity: 0.7; }
+            #miss-hint { bottom: 112px; width: max-content; max-width: 86vw; font-size: 13px; }
+            #revive-overlay .rv-box { width: min(86vw, 360px); padding: 28px 20px; }
+            .rv-btn { min-width: 116px; padding: 13px 20px; }
         }
     </style>
 </head>
@@ -59,10 +87,13 @@
 
     <div id="score">0</div>
     <div id="best-score">最高分: 0</div>
+    <div id="stage-goal"><span class="stage-label">下一站: 巴黎</span><span id="stage-progress">0/6</span><div class="stage-bar"><div class="stage-fill" id="stage-fill"></div></div></div>
+    <div id="stage-toast"></div>
     <div id="combo"></div>
     <div id="multiplier"></div>
-    <div id="power-bg"><div id="power-fill"></div></div>
-    <div id="tip">按住屏幕蓄力 · 松开跳跃</div>
+    <div id="power-bg"><div id="power-target"></div><div id="power-fill"></div></div>
+    <div id="tip">按住蓄力，松开跳跃</div>
+    <div id="miss-hint"></div>
     <div id="city-name"></div>
 
     <div id="char-select" class="overlay">
@@ -84,8 +115,14 @@
         <div class="lb">得分</div>
         <div class="fs" id="final-score">0</div>
         <div class="bst">最高分: <span id="best-final">0</span></div>
+        <div class="rank-title" id="rank-title">天台新手</div>
+        <div class="stats-grid">
+            <div class="stat-card"><span>最高连击</span><strong id="final-max-streak">0</strong></div>
+            <div class="stat-card"><span>完美落点</span><strong id="final-perfects">0</strong></div>
+            <div class="stat-card"><span>抵达城市</span><strong id="final-cities">1</strong></div>
+        </div>
         <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap;justify-content:center;">
-            <div class="rbtn" id="restart-btn">重新开始</div>
+            <div class="rbtn primary" id="restart-btn">再来一局</div>
             <div class="rbtn" id="char-select-btn">重新选择角色</div>
         </div>
     </div>
